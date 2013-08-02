@@ -223,7 +223,7 @@ namespace QuantBox.OQ.GS
                 new QuickFix.ClOrdID(Order.ClOrdID),
                 //new QuickFix.HandlInst(Order.HandlInst),
                 new QuickFix.HandlInst(HandlInst.AUTOEXECPRIV), // GS FIX
-                new QuickFix.Symbol(Order.Symbol),
+                new QuickFix.Symbol(Order.Symbol.Substring(0,6)),
                 new QuickFix.Side(Order.Side),
                 new QuickFix.TransactTime(Order.TransactTime),
                 new QuickFix.OrdType(Order.OrdType));
