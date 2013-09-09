@@ -6,6 +6,7 @@ using SmartQuant.FIXApplication;
 using System.ComponentModel;
 using SmartQuant.Providers;
 using SmartQuant;
+using SmartQuant.Instruments;
 
 namespace QuantBox.OQ.GS
 {
@@ -28,7 +29,6 @@ namespace QuantBox.OQ.GS
             //base.priceSocketConnectHost = "localhost";
             //base.priceSocketConnectPort = 10502;
             base.PriceFileStorePath = string.Format(@"{0}", Framework.Installation.LogDir.FullName);
-            base.PriceSessionEnabled = false;
 
             // order
             //base.orderSenderCompID = "tester";
@@ -81,6 +81,13 @@ namespace QuantBox.OQ.GS
         protected override QuickFIX42CommonApplication CreateApplicationInstance()
         {
             return new GSFIXApplication(this);
+        }
+
+        internal Instrument GetInstrument(string reqID)
+        {
+            RequestRecord record = mdRequests[reqID] as RequestRecord;
+
+            return (record == null) ? null : InstrumentManager.Instruments[record.Symbol];
         }
     }
 }

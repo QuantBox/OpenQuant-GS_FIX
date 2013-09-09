@@ -8,6 +8,7 @@ using SmartQuant.Execution;
 using SmartQuant.Instruments;
 using SmartQuant;
 using System.Collections;
+using SmartQuant.Data;
 
 namespace QuantBox.OQ.GS
 {
@@ -53,6 +54,314 @@ namespace QuantBox.OQ.GS
 
             if (text != null)
                 provider.EmitError(text);
+        }
+
+        public override void onMessage(QuickFix42.MarketDataSnapshotFullRefresh snapshot, QuickFix.SessionID sessionID)
+        {
+            if (snapshot.isSetNoMDEntries())
+            {
+                string reqID = snapshot.getMDReqID().getValue();
+
+                Instrument instrument = (provider as GSFIX).GetInstrument(reqID);
+
+                instrument.OrderBook.Clear();
+
+                QuickFix42.MarketDataSnapshotFullRefresh.NoMDEntries group = new QuickFix42.MarketDataSnapshotFullRefresh.NoMDEntries();
+
+                Quote quote = new Quote();
+
+                quote.DateTime = Clock.Now;
+
+                for (uint i = 1; i <= snapshot.getNoMDEntries().getValue(); i++)
+                {
+                    snapshot.getGroup(i, group);
+
+                    SmartQuant.Data.MarketDepth depth;
+
+                    int position = 0;
+
+                    if (group.isSetMDEntryPositionNo())
+                        position = group.getMDEntryPositionNo().getValue() - 1;
+
+                    double price = group.getMDEntryPx().getValue();
+                    int size = (int)group.getMDEntrySize().getValue();
+
+                    // Console.WriteLine("Snapshot Level : " + position + " " + price + " " + size);
+
+                    switch (group.getMDEntryType().getValue())
+                    {
+                        case QuickFix.MDEntryType.TRADE:
+
+                            provider.EmitTrade(new Trade(Clock.Now, price, size), instrument);
+
+                            break;
+
+                        case QuickFix.MDEntryType.BID:
+
+                            // market depth
+
+                            depth = new SmartQuant.Data.MarketDepth(Clock.Now, "", position, MDOperation.Insert, MDSide.Bid, price, size);
+
+                            provider.EmitMarketDepth(depth, instrument);
+
+                            // quote
+
+                            if (position == 0)
+                            {
+                                quote.Bid = price;
+                                quote.BidSize = size;
+                            }
+
+                            break;
+
+                        case QuickFix.MDEntryType.OFFER:
+
+                            // market depth
+
+                            depth = new SmartQuant.Data.MarketDepth(Clock.Now, "", position, MDOperation.Insert, MDSide.Ask, price, size);
+
+                            provider.EmitMarketDepth(depth, instrument);
+
+                            // quote
+
+                            if (position == 0)
+                            {
+                                quote.Ask = price;
+                                quote.AskSize = size;
+                            }
+
+                            break;
+                    }
+                }
+
+                group.Dispose();
+
+                provider.EmitQuote(quote, instrument);
+            }
+        }
+
+        public override void onMessage(QuickFix42.MarketDataIncrementalRefresh refresh, QuickFix.SessionID sessionID)
+        {
+            if (refresh.isSetNoMDEntries())
+            {
+                string reqID = refresh.getMDReqID().getValue();
+
+                Instrument instrument = (provider as GSFIX).GetInstrument(reqID);
+
+                if (instrument == null)
+                    return;
+
+                QuickFix42.MarketDataIncrementalRefresh.NoMDEntries group = new QuickFix42.MarketDataIncrementalRefresh.NoMDEntries();
+
+                int position;
+                double price;
+                int size;
+
+                SmartQuant.Data.MarketDepth depth;
+                SmartQuant.Data.Quote quote;
+
+                for (uint i = 1; i <= refresh.getNoMDEntries().getValue(); i++)
+                {
+                    refresh.getGroup(i, group);
+
+                    switch (group.getMDUpdateAction().getValue())
+                    {
+                        // new
+
+                        case QuickFix.MDUpdateAction.NEW:
+                            {
+                                switch (group.getMDEntryType().getValue())
+                                {
+                                    case QuickFix.MDEntryType.BID:
+
+                                        //Console.WriteLine("NEW BID");
+
+                                        price = group.getMDEntryPx().getValue();
+                                        size = (int)group.getMDEntrySize().getValue();
+
+                                        // market depth
+
+                                        depth = new SmartQuant.Data.MarketDepth(Clock.Now, "", -1, MDOperation.Insert, MDSide.Bid, price, size);
+
+                                        provider.EmitMarketDepth(depth, instrument);
+
+                                        // quote, best bid
+
+                                        if (price > instrument.Quote.Bid)
+                                        {
+                                            quote = new Quote(instrument.Quote);
+
+                                            quote.DateTime = Clock.Now;
+                                            quote.Bid = price;
+                                            quote.BidSize = size;
+
+                                            provider.EmitQuote(quote, instrument);
+                                        }
+
+                                        break;
+
+                                    case QuickFix.MDEntryType.OFFER:
+
+                                        //Console.WriteLine("NEW ASK");
+
+                                        price = group.getMDEntryPx().getValue();
+                                        size = (int)group.getMDEntrySize().getValue();
+
+                                        // market depth
+
+                                        depth = new SmartQuant.Data.MarketDepth(Clock.Now, "", -1, MDOperation.Insert, MDSide.Ask, price, size);
+
+                                        provider.EmitMarketDepth(depth, instrument);
+
+                                        // quote, best ask
+
+                                        if (price < instrument.Quote.Ask)
+                                        {
+                                            quote = new Quote(instrument.Quote);
+
+                                            quote.DateTime = Clock.Now;
+                                            quote.Ask = price;
+                                            quote.AskSize = size;
+
+                                            provider.EmitQuote(quote, instrument);
+                                        }
+
+                                        break;
+
+                                    case QuickFix.MDEntryType.TRADE:
+
+                                        provider.EmitTrade(new Trade(Clock.Now, group.getMDEntryPx().getValue(), (int)group.getMDEntrySize().getValue()), instrument);
+
+                                        break;
+                                }
+                            }
+                            break;
+
+                        // change
+
+                        case QuickFix.MDUpdateAction.CHANGE:
+                            {
+                                switch (group.getMDEntryType().getValue())
+                                {
+                                    case QuickFix.MDEntryType.BID:
+
+                                        //Console.WriteLine("CHANGE BID!");
+
+                                        position = group.getMDEntryPositionNo().getValue() - 1;
+                                        size = (int)group.getMDEntrySize().getValue();
+
+                                        // market depth
+
+                                        depth = new SmartQuant.Data.MarketDepth(Clock.Now, "", position, MDOperation.Update, MDSide.Bid, 0, size);
+
+                                        provider.EmitMarketDepth(depth, instrument);
+
+                                        // quote, best bid
+
+                                        if (position == 0)
+                                        {
+                                            quote = new Quote(instrument.Quote);
+
+                                            quote.DateTime = Clock.Now;
+                                            quote.BidSize = (int)group.getMDEntrySize().getValue();
+
+                                            provider.EmitQuote(quote, instrument);
+                                        }
+
+                                        break;
+
+                                    case QuickFix.MDEntryType.OFFER:
+
+                                        //Console.WriteLine("CHANGE ASK!");
+
+                                        position = group.getMDEntryPositionNo().getValue() - 1;
+                                        size = (int)group.getMDEntrySize().getValue();
+
+                                        // market depth
+
+                                        depth = new SmartQuant.Data.MarketDepth(Clock.Now, "", position, MDOperation.Update, MDSide.Ask, 0, size);
+
+                                        provider.EmitMarketDepth(depth, instrument);
+
+                                        // quote, best bid
+
+                                        if (position == 0)
+                                        {
+                                            quote = new Quote(instrument.Quote);
+
+                                            quote.DateTime = Clock.Now;
+                                            quote.AskSize = (int)group.getMDEntrySize().getValue();
+
+                                            provider.EmitQuote(quote, instrument);
+                                        }
+
+                                        break;
+                                }
+                            }
+                            break;
+
+                        // delete
+
+                        case QuickFix.MDUpdateAction.DELETE:
+                            {
+                                switch (group.getMDEntryType().getValue())
+                                {
+                                    case QuickFix.MDEntryType.BID:
+
+                                        //Console.WriteLine("DELETE BID");
+
+                                        position = group.getMDEntryPositionNo().getValue() - 1;
+
+                                        // market depth
+
+                                        depth = new SmartQuant.Data.MarketDepth(Clock.Now, "", position, MDOperation.Delete, MDSide.Bid, 0, 0);
+
+                                        provider.EmitMarketDepth(depth, instrument);
+
+                                        // quote
+
+                                        if (position == 0)
+                                        {
+                                            Quote newQuote = instrument.OrderBook.GetQuote(0);
+
+                                            newQuote.DateTime = Clock.Now;
+
+                                            provider.EmitQuote(newQuote, instrument);
+                                        }
+                                        break;
+
+                                    case QuickFix.MDEntryType.OFFER:
+
+                                        //Console.WriteLine("DELETE ASK");
+
+                                        position = group.getMDEntryPositionNo().getValue() - 1;
+
+                                        // market depth
+
+                                        depth = new SmartQuant.Data.MarketDepth(Clock.Now, "", position, MDOperation.Delete, MDSide.Ask, 0, 0);
+
+                                        provider.EmitMarketDepth(depth, instrument);
+
+                                        // quote
+
+                                        if (position == 0)
+                                        {
+                                            Quote newQuote = instrument.OrderBook.GetQuote(0);
+
+                                            newQuote.DateTime = Clock.Now;
+
+                                            provider.EmitQuote(newQuote, instrument);
+                                        }
+
+                                        break;
+                                }
+                            }
+                            break;
+                    }
+                }
+
+                group.Dispose();
+            }
         }
 
         public override void onMessage(QuickFix42.OrderCancelReject message, SessionID session)
@@ -215,6 +524,89 @@ namespace QuantBox.OQ.GS
             // emit execution report
 
             EmitExecutionReport(Report);
+        }
+
+        public override void Send(FIXMarketDataRequest Request)
+        {
+            //Console.WriteLine("REQUEST");
+
+            QuickFix42.MarketDataRequest request = new QuickFix42.MarketDataRequest(
+                new QuickFix.MDReqID(Request.MDReqID),
+                new QuickFix.SubscriptionRequestType(SubscriptionRequestType.SNAPSHOT), //GS FIX
+                new QuickFix.MarketDepth(5)); //GS FIX
+
+            //request.set(new QuickFix.MDUpdateType(Request.MDUpdateType));
+            //request.set(new QuickFix.AggregatedBook(Request.AggregatedBook));
+
+            QuickFix42.MarketDataRequest.NoMDEntryTypes typeGroup;
+
+            typeGroup = new QuickFix42.MarketDataRequest.NoMDEntryTypes();
+            typeGroup.set(new MDEntryType(FIXMDEntryType.Bid));
+            request.addGroup(typeGroup);
+            typeGroup.Dispose();
+
+            typeGroup = new QuickFix42.MarketDataRequest.NoMDEntryTypes();
+            typeGroup.set(new MDEntryType(FIXMDEntryType.Offer));
+            request.addGroup(typeGroup);
+            typeGroup.Dispose();
+
+            typeGroup = new QuickFix42.MarketDataRequest.NoMDEntryTypes();
+            typeGroup.set(new MDEntryType(FIXMDEntryType.Trade));
+            request.addGroup(typeGroup);
+            typeGroup.Dispose();
+
+            //typeGroup = new QuickFix42.MarketDataRequest.NoMDEntryTypes();
+            //typeGroup.set(new MDEntryType(FIXMDEntryType.Open));
+            //request.addGroup(typeGroup);
+            //typeGroup.Dispose();
+
+            //typeGroup = new QuickFix42.MarketDataRequest.NoMDEntryTypes();
+            //typeGroup.set(new MDEntryType(FIXMDEntryType.Close));
+            //request.addGroup(typeGroup);
+            //typeGroup.Dispose();
+
+            //typeGroup = new QuickFix42.MarketDataRequest.NoMDEntryTypes();
+            //typeGroup.set(new MDEntryType(FIXMDEntryType.High));
+            //request.addGroup(typeGroup);
+            //typeGroup.Dispose();
+
+            //typeGroup = new QuickFix42.MarketDataRequest.NoMDEntryTypes();
+            //typeGroup.set(new MDEntryType(FIXMDEntryType.Low));
+            //request.addGroup(typeGroup);
+            //typeGroup.Dispose();
+
+            QuickFix42.MarketDataRequest.NoRelatedSym symGroup = new QuickFix42.MarketDataRequest.NoRelatedSym();
+
+            FIXRelatedSymGroup Group = Request.GetRelatedSymGroup(0);
+
+            symGroup.set(new QuickFix.Symbol(Group.Symbol.Substring(0, 6)));
+
+            if (Group.Symbol.StartsWith("60") || Group.Symbol.StartsWith("51"))
+            {
+                //order.set(new QuickFix.SecurityExchange("XSHG"));// 上海
+                symGroup.set(new QuickFix.SecurityExchange("SS"));// 上海
+            }
+            else if (Group.Symbol.StartsWith("00") || Group.Symbol.StartsWith("30") || Group.Symbol.StartsWith("15"))
+            {
+                //order.set(new QuickFix.SecurityExchange("XSHE"));// 深圳
+                symGroup.set(new QuickFix.SecurityExchange("SZ"));// 深圳
+            }
+
+            //if (Group.ContainsField(EFIXField.SecurityType)) symGroup.set(new QuickFix.SecurityType(Group.SecurityType));
+            //if (Group.ContainsField(EFIXField.MaturityMonthYear)) symGroup.set(new QuickFix.MaturityMonthYear(Group.MaturityMonthYear));
+            //if (Group.ContainsField(EFIXField.MaturityDay           )) symGroup.set(new QuickFix.MaturityDay           (Group.MaturityDay           ));
+            //if (Group.ContainsField(EFIXField.PutOrCall             )) symGroup.set(new QuickFix.PutOrCall             (Group.PutOrCall             ));
+            //if (Group.ContainsField(EFIXField.StrikePrice)) symGroup.set(new QuickFix.StrikePrice(Group.StrikePrice));
+            //if (Group.ContainsField(EFIXField.OptAttribute)) symGroup.set(new QuickFix.OptAttribute(Group.OptAttribute));
+            //if (Group.ContainsField(EFIXField.SecurityID)) symGroup.set(new QuickFix.SecurityID(Group.SecurityID));
+            //if (Group.ContainsField(EFIXField.SecurityExchange)) symGroup.set(new QuickFix.SecurityExchange(Group.SecurityExchange));
+
+            request.addGroup(symGroup);
+
+            symGroup.Dispose();
+
+            //Session.sendToTarget(request, orderSessionID);
+            Session.sendToTarget(request, priceSessionID);
         }
 
         public override void Send(FIXNewOrderSingle Order)
