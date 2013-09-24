@@ -7,17 +7,32 @@ using System.ComponentModel;
 using SmartQuant.Providers;
 using SmartQuant;
 using SmartQuant.Instruments;
+using QuickFix;
 
 namespace QuantBox.OQ.GS
 {
+    public enum EncryptType : int
+    {
+        NONE = 0,
+        DESECB = 2,
+        BlowFish = 101,
+    }
+
     public class GSFIX:QuickFIX42CommonProvider
     {
         // Class members
 		private string password;
 		private string account;
+        private string creditAccount;
+        private EncryptType encryptType;
+        private string publicKey;
 
         public GSFIX()
         {
+            publicKey = "GSFIXGW";
+            account = "";
+            creditAccount = "";
+
             // defaults
             base.DataDictionary = string.Format(@"{0}\FIX42_GS.xml", Framework.Installation.FIXDir.FullName);
             base.FileStorePath = string.Format(@"{0}", Framework.Installation.LogDir.FullName);
@@ -76,6 +91,30 @@ namespace QuantBox.OQ.GS
         {
             get { return account; }
             set { account = value; }
+        }
+
+        [Category("Login")]
+        [Description("CreditAccount")]
+        public string CreditAccount
+        {
+            get { return creditAccount; }
+            set { creditAccount = value; }
+        }
+
+        [Category("Login")]
+        [Description("EncryptMethod")]
+        public EncryptType EncryptType
+        {
+            get { return encryptType; }
+            set { encryptType = value; }
+        }
+
+        [Category("Login")]
+        [Description("PublicKey")]
+        public string PublicKey
+        {
+            get { return publicKey; }
+            set { publicKey = value; }
         }
 
         protected override QuickFIX42CommonApplication CreateApplicationInstance()

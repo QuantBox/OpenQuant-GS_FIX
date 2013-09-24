@@ -9,11 +9,19 @@ using SmartQuant.Instruments;
 using SmartQuant;
 using System.Collections;
 using SmartQuant.Data;
+using System.Runtime.InteropServices;
+using System.Text;
 
 namespace QuantBox.OQ.GS
 {
     class GSFIXApplication : QuickFIX42CommonApplication
     {
+        private const string OpenPrefix = "O|";
+        private const string ClosePrefix = "C|";
+
+        [DllImport("gsencrypt.dll", CallingConvention = CallingConvention.Cdecl)]
+        static extern int gsEncrypt(int pi_iMode, string pi_pszDataRaw, int pi_iDataRawSize, string pi_pszKey, StringBuilder po_pszDataEncrypt, int pi_iDataEncryptSize);
+
         // Class members
         private Hashtable cancelRequests = new Hashtable();
 
@@ -33,8 +41,41 @@ namespace QuantBox.OQ.GS
 
                 GSFIX gsfix = provider as GSFIX;
 
-                message.setField(new RawData(string.Format("Z:{0}:{1}:",gsfix.Account,gsfix.Password)));
-                message.setField(new EncryptMethod(EncryptMethod.NONE));
+                StringBuilder encrypt_pwd = new StringBuilder(128);
+                switch (gsfix.EncryptType)
+                {
+                    case EncryptType.NONE:
+                        encrypt_pwd.Insert(0, gsfix.Password);
+                        message.setField(new EncryptMethod(EncryptMethod.NONE));
+                        break;
+                    case EncryptType.DESECB:
+                        gsEncrypt((int)gsfix.EncryptType, gsfix.Password, gsfix.Password.Length, gsfix.PublicKey, encrypt_pwd, 128);
+                        message.setField(new EncryptMethod(EncryptMethod.DESECBMODE));
+                        break;
+                    case EncryptType.BlowFish:
+                        gsEncrypt((int)gsfix.EncryptType, gsfix.Password, gsfix.Password.Length, gsfix.PublicKey, encrypt_pwd, 128);
+                        message.setField(new EncryptMethod((int)EncryptType.BlowFish));
+                        break;
+                    default:
+                        break;
+                }
+
+                if (!string.IsNullOrEmpty(gsfix.Account) && !string.IsNullOrEmpty(gsfix.CreditAccount))
+                {
+                    message.setField(new RawData(string.Format("T:{0},{1}:{2}", gsfix.Account, gsfix.CreditAccount, encrypt_pwd)));
+                }
+                else if (!string.IsNullOrEmpty(gsfix.Account))
+                {
+                    message.setField(new RawData(string.Format("Z:{0}:{1}", gsfix.Account, encrypt_pwd)));
+                }
+                else if (!string.IsNullOrEmpty(gsfix.CreditAccount))
+                {
+                    message.setField(new RawData(string.Format("X:{0}:{1}", gsfix.CreditAccount, encrypt_pwd)));
+                }
+                else
+                {
+                    message.setField(new RawData(string.Format("T:{0},{1}:{2}", gsfix.Account, gsfix.CreditAccount, encrypt_pwd)));
+                }
             }
         }
 
@@ -605,8 +646,10 @@ namespace QuantBox.OQ.GS
 
             symGroup.Dispose();
 
-            //Session.sendToTarget(request, orderSessionID);
-            Session.sendToTarget(request, priceSessionID);
+            if(base.priceSessionID == null)
+                Session.sendToTarget(request, orderSessionID);
+            else
+                Session.sendToTarget(request, priceSessionID);
         }
 
         public override void Send(FIXNewOrderSingle Order)
@@ -636,6 +679,15 @@ namespace QuantBox.OQ.GS
             {
                 //order.set(new QuickFix.SecurityExchange("XSHE"));// 深圳
                 order.set(new QuickFix.SecurityExchange("SZ"));// 深圳
+            }
+
+            if (Order.Text.StartsWith(OpenPrefix))
+            {
+                order.setField(new QuickFix.CashMargin(CashMargin.MARGIN_OPEN));
+            }
+            else if (Order.Text.StartsWith(ClosePrefix))
+            {
+                order.setField(new QuickFix.CashMargin(CashMargin.MARGIN_CLOSE));
             }
 
             //order.set(new QuickFix.SecurityType(Order.SecurityType));
