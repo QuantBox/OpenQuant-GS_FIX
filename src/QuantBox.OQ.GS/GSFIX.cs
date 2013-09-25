@@ -29,7 +29,7 @@ namespace QuantBox.OQ.GS
 
         public GSFIX()
         {
-            publicKey = "GSFIXGW";
+            publicKey = "GWGSFIX";
             account = "";
             creditAccount = "";
 

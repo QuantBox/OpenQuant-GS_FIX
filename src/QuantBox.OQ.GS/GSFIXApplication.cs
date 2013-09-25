@@ -19,8 +19,8 @@ namespace QuantBox.OQ.GS
         private const string OpenPrefix = "O|";
         private const string ClosePrefix = "C|";
 
-        [DllImport("gsencrypt.dll", CallingConvention = CallingConvention.Cdecl)]
-        static extern int gsEncrypt(int pi_iMode, string pi_pszDataRaw, int pi_iDataRawSize, string pi_pszKey, StringBuilder po_pszDataEncrypt, int pi_iDataEncryptSize);
+        [DllImport("gsencrypt.dll", CallingConvention = CallingConvention.Cdecl,CharSet=CharSet.Ansi)]
+        static extern int gsEncrypt(int pi_iMode, string pi_pszDataRaw, int pi_iDataRawSize, string pi_pszKey, byte[] po_pszDataEncrypt, int pi_iDataEncryptSize);
 
         // Class members
         private Hashtable cancelRequests = new Hashtable();
@@ -41,19 +41,21 @@ namespace QuantBox.OQ.GS
 
                 GSFIX gsfix = provider as GSFIX;
 
-                StringBuilder encrypt_pwd = new StringBuilder(128);
+                string encrypt_pwd = gsfix.Password;
+                byte[] encrypt_pwd_byte = new byte[128];
                 switch (gsfix.EncryptType)
                 {
                     case EncryptType.NONE:
-                        encrypt_pwd.Insert(0, gsfix.Password);
                         message.setField(new EncryptMethod(EncryptMethod.NONE));
                         break;
                     case EncryptType.DESECB:
-                        gsEncrypt((int)gsfix.EncryptType, gsfix.Password, gsfix.Password.Length, gsfix.PublicKey, encrypt_pwd, 128);
+                        gsEncrypt(2, gsfix.Password, gsfix.Password.Length, gsfix.PublicKey, encrypt_pwd_byte, 128);
+                        encrypt_pwd = Encoding.ASCII.GetString(encrypt_pwd_byte);
                         message.setField(new EncryptMethod(EncryptMethod.DESECBMODE));
                         break;
                     case EncryptType.BlowFish:
-                        gsEncrypt((int)gsfix.EncryptType, gsfix.Password, gsfix.Password.Length, gsfix.PublicKey, encrypt_pwd, 128);
+                        gsEncrypt(101, gsfix.Password, gsfix.Password.Length, gsfix.PublicKey, encrypt_pwd_byte, 128);
+                        encrypt_pwd = Encoding.ASCII.GetString(encrypt_pwd_byte);
                         message.setField(new EncryptMethod((int)EncryptType.BlowFish));
                         break;
                     default:
@@ -62,19 +64,19 @@ namespace QuantBox.OQ.GS
 
                 if (!string.IsNullOrEmpty(gsfix.Account) && !string.IsNullOrEmpty(gsfix.CreditAccount))
                 {
-                    message.setField(new RawData(string.Format("T:{0},{1}:{2}", gsfix.Account, gsfix.CreditAccount, encrypt_pwd)));
+                    message.setField(new RawData(string.Format("T:{0},{1}:{2}:", gsfix.Account, gsfix.CreditAccount, encrypt_pwd.ToString())));
                 }
                 else if (!string.IsNullOrEmpty(gsfix.Account))
                 {
-                    message.setField(new RawData(string.Format("Z:{0}:{1}", gsfix.Account, encrypt_pwd)));
+                    message.setField(new RawData(string.Format("Z:{0}:{1}:", gsfix.Account, encrypt_pwd.ToString())));
                 }
                 else if (!string.IsNullOrEmpty(gsfix.CreditAccount))
                 {
-                    message.setField(new RawData(string.Format("X:{0}:{1}", gsfix.CreditAccount, encrypt_pwd)));
+                    message.setField(new RawData(string.Format("X:{0}:{1}:", gsfix.CreditAccount, encrypt_pwd.ToString())));
                 }
                 else
                 {
-                    message.setField(new RawData(string.Format("T:{0},{1}:{2}", gsfix.Account, gsfix.CreditAccount, encrypt_pwd)));
+                    message.setField(new RawData(string.Format("T:{0},{1}:{2}:", gsfix.Account, gsfix.CreditAccount, encrypt_pwd.ToString())));
                 }
             }
         }
@@ -86,6 +88,37 @@ namespace QuantBox.OQ.GS
             if ((message is QuickFix42.Logout || message is QuickFix42.Reject) && message.isSetField(QuickFix.Text.FIELD))
             {
                 Console.WriteLine(message.getString(QuickFix.Text.FIELD));
+            }
+
+            if (message is QuickFix42.Logout)
+            {
+                Disconnect();
+            }
+        }
+
+        public override void Disconnect()
+        {
+            base.Disconnect();
+
+            // 父类的断开连接要求登录后才断开，实际上可能是密码错了
+            Session session;
+
+            // price
+            if (priceSessionID != null)
+            {
+                session = Session.lookupSession(priceSessionID);
+
+                if (session != null/* && session.isLoggedOn()*/)
+                    session.logout();
+            }
+
+            // order
+            if (orderSessionID != null)
+            {
+                session = Session.lookupSession(orderSessionID);
+
+                if (session != null/* && session.isLoggedOn()*/)
+                    session.logout();
             }
         }
 
